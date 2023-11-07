@@ -276,37 +276,3 @@ ggsave("figures/fig_4.png", plot = verified_rainclouds, width = 14, height = 10,
 #######################################################################################################################
    # Scraps #
 #######################################################################################################################
-
-plot_visual_disinformation_percentage <- function(community_notes) {
-
- prepare_data <- function(df) {
-  df$Week <- as.Date(df$date, format='%d/%m/%Y')
-  weekly_counts <- df %>%
-    group_by(Week = floor_date(Week, "week", week_start = 1)) %>%
-    summarise(n = n_distinct(tweetId), .groups = "drop") %>%  
-    mutate(Week_Year = format(Week, "%U/%Y")) %>%
-    filter(Week > as.Date("2022-11-01"))  
-  return(weekly_counts)
-}
-
-  weekly_total_notes <- prepare_data(community_notes[['no_visual']])
-  weekly_visual_disinformation <- prepare_data(community_notes[['visual']])
-  weekly_counts <- weekly_total_notes %>%
-    full_join(weekly_visual_disinformation, by = c("Week", "Week_Year"), suffix = c("_total", "_visual")) %>%
-    replace_na(list(n_total = 0, n_visual = 0)) %>%
-    mutate(Percentage = (n_visual / n_total) * 100)
-
-  percentage_plot <- ggplot(weekly_counts, aes(x = Week, y = Percentage)) +
-    geom_bar(stat = "identity", fill = '#539794') +
-    geom_smooth(se=FALSE,size=2,color="#D4AF37") +
-    scale_x_date(date_labels = "%U/%Y", date_breaks = "5 week") +
-    labs(title = "Weekly Percentage of Notes Mentioning AI-Generated Media",
-         y = "Percentage") +
-    custom_theme +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
-  print(percentage_plot)
-}
-
-percentage_plot = plot_visual_disinformation_percentage(community_notes)
-ggsave("percentage_plot.png", plot = percentage_plot, width = 14, height = 8, dpi = 500)
