@@ -1,6 +1,7 @@
 #######################################################################################################################
    # Set up environment #
 #######################################################################################################################
+
 install.packages("reticulate")
 install.packages('ggdist')
 install.packages("readxl")
@@ -76,7 +77,7 @@ custom_theme <- theme_bw(base_size = 16) +
 
 plot_visual_disinformation_percentage <- function(community_notes) {
 
-  prepare_data <- function(df) {
+  preprocess_data <- function(df) {
     df$Month <- as.Date(df$date, format='%d/%m/%Y')
     monthly_counts <- df %>%
       group_by(Month = floor_date(Month, "month")) %>%
@@ -87,8 +88,8 @@ plot_visual_disinformation_percentage <- function(community_notes) {
     return(monthly_counts)
   }
 
-  monthly_total_notes <- prepare_data(community_notes[['no_visual']])
-  monthly_visual_disinformation <- prepare_data(community_notes[['visual']])
+  monthly_total_notes <- preprocess_data(community_notes[['no_visual']])
+  monthly_visual_disinformation <- preprocess_data(community_notes[['visual']])
   monthly_counts <- monthly_total_notes %>%
     full_join(monthly_visual_disinformation, by = c("Month", "Month_Year"), suffix = c("_total", "_visual")) %>%
     replace_na(list(n_total = 0, n_visual = 0)) %>%
@@ -114,7 +115,7 @@ percentage_plot = plot_visual_disinformation_percentage(community_notes)
 
 plot_monthly_views <- function(annotated_data) {
 
-  prepare_data <- function(df) {
+  preprocess_data <- function(df) {
     df$Month <- as.Date(df$tweetDate, format='%d/%m/%Y')
     monthly_counts <- df %>%
       group_by(Month = floor_date(Month, "month")) %>%
@@ -124,7 +125,7 @@ plot_monthly_views <- function(annotated_data) {
     return(monthly_counts)
   }
 
-  monthly_counts <- prepare_data(annotated_data)
+  monthly_counts <- preprocess_data(annotated_data)
   
   views_plot <- ggplot(monthly_counts, aes(x = Month, y = total_views)) +
     geom_bar(stat = "identity", fill = '#539794') +
@@ -147,6 +148,44 @@ raw_views_plot = plot_monthly_views(annotated_data)
 
 merged_temporal_plot = grid.arrange(percentage_plot, raw_views_plot, nrow = 2)
 ggsave("figures/fig_1.png", plot = merged_temporal_plot, width = 11, height = 10, dpi = 500)
+
+#######################################################################################################################
+   # Stepwise CDF Plot #
+#######################################################################################################################
+
+weekly_cdf_plot <- function(annotated_data) {
+  annotated_data <- annotated_data %>%
+    mutate(
+      tweetDate = as.Date(tweetDate, format="%d/%m/%Y"),
+      Week = floor_date(tweetDate, unit="week")
+    )
+  
+  weekly_data <- annotated_data %>%
+    group_by(Week) %>%
+    summarise(weekly_views = sum(views), .groups = "drop") %>%
+    arrange(Week) %>%
+    mutate(
+      cumulative_views = cumsum(weekly_views),
+      Week_Label = strftime(Week, format="%V/%Y"),
+      cumulative_views_millions = cumulative_views / 1e6
+    )
+  
+  cdf_plot <- ggplot(weekly_data, aes(x = Week, y = cumulative_views_millions)) +
+    geom_step(color="#539794", size=2) +
+    geom_vline(xintercept = as.Date("2023-03-13"), linetype="dotted", color="#D4AF37", size=2) +
+    scale_x_date(
+      date_breaks = "5 weeks", 
+      labels = function(x) strftime(x, format="%V/%Y")  
+    ) +
+    scale_y_continuous(labels = scales::label_number(suffix = "m")) +
+    labs(x = "Week", y = "Cumulative Views (Millions)", title = "CDF of Views of Tweet with AI-Generated Media") +
+    custom_theme
+  
+  return(cdf_plot)
+}
+
+cdf_plot <- weekly_cdf_plot(annotated_data)
+ggsave("figures/fig_2.png", plot = cdf_plot, width = 11, height = 10, dpi = 500)
 
 #######################################################################################################################
    # Raincloud Plots by Features Combinations (log scale) - Define Main Function #
@@ -234,11 +273,10 @@ verified_ratio_raincloud <- plot_raincloud(annotated_data, 'viewsFollowersRatio'
 verified_rainclouds = grid.arrange(verified_raincloud,verified_ratio_raincloud,ncol=2)
 ggsave("figures/fig_4.png", plot = verified_rainclouds, width = 14, height = 10, dpi = 500)
 
-
-
 #######################################################################################################################
    # Scraps #
 #######################################################################################################################
+
 plot_visual_disinformation_percentage <- function(community_notes) {
 
  prepare_data <- function(df) {
@@ -272,3 +310,96 @@ plot_visual_disinformation_percentage <- function(community_notes) {
 
 percentage_plot = plot_visual_disinformation_percentage(community_notes)
 ggsave("percentage_plot.png", plot = percentage_plot, width = 14, height = 8, dpi = 500)
+
+
+#####
+
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+
+prepare_weekly_data <- function(df) {
+    df$Week <- as.Date(df$tweetDate, format='%d/%m/%Y')
+    weekly_counts <- df %>%
+      mutate(Week_Start = floor_date(Week, "week")) %>%
+      group_by(Week_Start) %>%
+      summarise(total_views = sum(views, na.rm = TRUE), .groups = "drop") %>%
+      arrange(Week_Start)
+
+    weekly_counts$cumulative_views <- cumsum(weekly_counts$total_views)
+
+    # Create week/year label
+    weekly_counts$Week_Year <- paste(week(weekly_counts$Week_Start), year(weekly_counts$Week_Start), sep="/")
+    
+    return(weekly_counts)
+}
+
+# Assuming `annotated_data` is your dataset
+weekly_data <- prepare_weekly_data(annotated_data)
+
+p <- ggplot(weekly_data, aes(x = Week_Year, y = cumulative_views/1e6, group = 1)) +
+  geom_step(color = "#539794",size=2) +
+  geom_vline(xintercept = which(weekly_data$Week_Year == "11/2023"), linetype = "dotted", color = "#D4AF37",size=2) +
+  scale_x_discrete(limits = weekly_data$Week_Year, breaks = weeks_to_show) +
+  scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 1)) +
+  xlab('Week') +
+  ylab('Cumulative Views (Millions)') +
+  ggtitle('CDF of Views of Tweet with AI-Generated Media') +
+  custom_theme +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(hjust = 1))
+
+# Print the plot
+print(p)
+
+
+###
+
+process_and_plot_weekly_data <- function(df, custom_theme) {
+  # Inner function to prepare weekly data
+  prepare_weekly_data <- function(df) {
+    df$Week <- as.Date(df$tweetDate, format='%d/%m/%Y')
+    weekly_counts <- df %>%
+      mutate(Week_Start = floor_date(Week, "week")) %>%
+      group_by(Week_Start) %>%
+      summarise(total_views = sum(views, na.rm = TRUE), .groups = "drop") %>%
+      arrange(Week_Start)
+    
+    weekly_counts$cumulative_views <- cumsum(weekly_counts$total_views)
+    weekly_counts$Week_Year <- paste(week(weekly_counts$Week_Start), year(weekly_counts$Week_Start), sep="/")
+    
+    return(weekly_counts)
+  }
+  
+  # Call the inner function to prepare the data
+  weekly_data <- prepare_weekly_data(df)
+  
+  # Plot the prepared data
+  p <- ggplot(weekly_data, aes(x = Week_Year, y = cumulative_views/1e6, group = 1)) +
+    geom_step(color = "#539794", size=2) +
+    geom_vline(xintercept = which(weekly_data$Week_Year == "11/2023"), linetype = "dotted", color = "#D4AF37", size=2) +
+    scale_x_discrete(limits = weekly_data$Week_Year) +
+    scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 1)) +
+    xlab('Week') +
+    ylab('Cumulative Views (Millions)') +
+    ggtitle('CDF of Views of Tweet with AI-Generated Media') +
+    custom_theme +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          axis.text.y = element_text(hjust = 1))
+  
+  # Return the plot
+  return(p)
+}
+
+# Example usage:
+# Assuming `annotated_data` is your dataset and `custom_theme` is defined
+plot <- process_and_plot_weekly_data(annotated_data, custom_theme)
+print(plot)
