@@ -178,7 +178,7 @@ weekly_cdf_plot <- function(annotated_data) {
       labels = function(x) strftime(x, format="%V/%Y")  
     ) +
     scale_y_continuous(labels = scales::label_number(suffix = "m")) +
-    labs(x = "Week", y = "Cumulative Views (Millions)", title = "CDF of Views of Tweet with AI-Generated Media") +
+    labs(x = "Week", y = "Cumulative Views (Millions)", title = "CDF of Views of Tweets with AI-Generated Media") +
     custom_theme
   
   return(cdf_plot)
@@ -310,96 +310,3 @@ plot_visual_disinformation_percentage <- function(community_notes) {
 
 percentage_plot = plot_visual_disinformation_percentage(community_notes)
 ggsave("percentage_plot.png", plot = percentage_plot, width = 14, height = 8, dpi = 500)
-
-
-#####
-
-library(dplyr)
-library(lubridate)
-library(ggplot2)
-
-library(dplyr)
-library(lubridate)
-library(ggplot2)
-
-library(dplyr)
-library(lubridate)
-library(ggplot2)
-
-prepare_weekly_data <- function(df) {
-    df$Week <- as.Date(df$tweetDate, format='%d/%m/%Y')
-    weekly_counts <- df %>%
-      mutate(Week_Start = floor_date(Week, "week")) %>%
-      group_by(Week_Start) %>%
-      summarise(total_views = sum(views, na.rm = TRUE), .groups = "drop") %>%
-      arrange(Week_Start)
-
-    weekly_counts$cumulative_views <- cumsum(weekly_counts$total_views)
-
-    # Create week/year label
-    weekly_counts$Week_Year <- paste(week(weekly_counts$Week_Start), year(weekly_counts$Week_Start), sep="/")
-    
-    return(weekly_counts)
-}
-
-# Assuming `annotated_data` is your dataset
-weekly_data <- prepare_weekly_data(annotated_data)
-
-p <- ggplot(weekly_data, aes(x = Week_Year, y = cumulative_views/1e6, group = 1)) +
-  geom_step(color = "#539794",size=2) +
-  geom_vline(xintercept = which(weekly_data$Week_Year == "11/2023"), linetype = "dotted", color = "#D4AF37",size=2) +
-  scale_x_discrete(limits = weekly_data$Week_Year, breaks = weeks_to_show) +
-  scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 1)) +
-  xlab('Week') +
-  ylab('Cumulative Views (Millions)') +
-  ggtitle('CDF of Views of Tweet with AI-Generated Media') +
-  custom_theme +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        axis.text.y = element_text(hjust = 1))
-
-# Print the plot
-print(p)
-
-
-###
-
-process_and_plot_weekly_data <- function(df, custom_theme) {
-  # Inner function to prepare weekly data
-  prepare_weekly_data <- function(df) {
-    df$Week <- as.Date(df$tweetDate, format='%d/%m/%Y')
-    weekly_counts <- df %>%
-      mutate(Week_Start = floor_date(Week, "week")) %>%
-      group_by(Week_Start) %>%
-      summarise(total_views = sum(views, na.rm = TRUE), .groups = "drop") %>%
-      arrange(Week_Start)
-    
-    weekly_counts$cumulative_views <- cumsum(weekly_counts$total_views)
-    weekly_counts$Week_Year <- paste(week(weekly_counts$Week_Start), year(weekly_counts$Week_Start), sep="/")
-    
-    return(weekly_counts)
-  }
-  
-  # Call the inner function to prepare the data
-  weekly_data <- prepare_weekly_data(df)
-  
-  # Plot the prepared data
-  p <- ggplot(weekly_data, aes(x = Week_Year, y = cumulative_views/1e6, group = 1)) +
-    geom_step(color = "#539794", size=2) +
-    geom_vline(xintercept = which(weekly_data$Week_Year == "11/2023"), linetype = "dotted", color = "#D4AF37", size=2) +
-    scale_x_discrete(limits = weekly_data$Week_Year) +
-    scale_y_continuous(labels = scales::unit_format(unit = "m", scale = 1)) +
-    xlab('Week') +
-    ylab('Cumulative Views (Millions)') +
-    ggtitle('CDF of Views of Tweet with AI-Generated Media') +
-    custom_theme +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1),
-          axis.text.y = element_text(hjust = 1))
-  
-  # Return the plot
-  return(p)
-}
-
-# Example usage:
-# Assuming `annotated_data` is your dataset and `custom_theme` is defined
-plot <- process_and_plot_weekly_data(annotated_data, custom_theme)
-print(plot)
