@@ -24,7 +24,6 @@ pd <- import("pandas")
 
 community_notes <- as.list(pd$read_pickle("data/community-notes-filtered.pkl"))
 annotated_data <- read.csv("data/annotated-data.csv")
-
 #######################################################################################################################
    # Pre-Process Data to Format Numeric Columns and Compute Views/Followers Ratio #
 #######################################################################################################################
@@ -99,7 +98,7 @@ plot_visual_disinformation_percentage <- function(community_notes) {
     geom_bar(stat = "identity", fill = '#539794') +
     geom_smooth(se=FALSE,size=2,color="#D4AF37") +
     scale_x_date(date_labels = "%m/%Y", date_breaks = "1 month") +
-    labs(title = "Monthly Percentage of Notes Mentioning AI-Generated Media",
+    labs(title = "Monthly Percentage of Tweets with Notes Mentioning Synthetic Media",
          y = "Percentage", x = "Month/Year") +
     custom_theme +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
@@ -107,7 +106,47 @@ plot_visual_disinformation_percentage <- function(community_notes) {
   print(percentage_plot)
 }
 
-percentage_plot = plot_visual_disinformation_percentage(community_notes)
+frequency_percentage_plot = plot_visual_disinformation_percentage(community_notes)
+
+#######################################################################################################################
+   # Relative Frequency of Tweets Containing Synthetic Media #
+#######################################################################################################################
+
+plot_synthetic_percentage <- function(community_notes, annotated_data) {
+  # Helper function to preprocess and aggregate data
+  preprocess_and_aggregate <- function(df, date_col) {
+    df %>%
+      mutate(Month = floor_date(as.Date(df[[date_col]], format='%d/%m/%Y'), "month")) %>%
+      count(Month) %>%
+      filter(Month > as.Date("2022-11-01"), Month <= as.Date("2023-09-30")) %>%
+      mutate(Month_Year = format(Month, "%m/%Y")) %>%
+      select(Month_Year, n)
+  }
+  
+  combined_notes <- bind_rows(
+    preprocess_and_aggregate(community_notes[['no_visual']], "date"),
+    preprocess_and_aggregate(community_notes[['visual']], "date")
+  ) %>%
+    group_by(Month_Year) %>%
+    summarise(total_n = sum(n, na.rm = TRUE), .groups = "drop")
+  
+  annotated_data$Month_Year <- format(as.Date(annotated_data$tweetDate, format='%d/%m/%Y'), "%m/%Y")
+  
+  combined_notes %>%
+    left_join(annotated_data %>% count(Month_Year), by = "Month_Year") %>%
+    mutate(Percentage = (n / total_n) * 100) %>%
+    ggplot(aes(x = as.Date(paste0("01/", Month_Year), format="%d/%m/%Y"), y = Percentage)) +
+      geom_col(fill = '#539794') +
+      geom_smooth(se = FALSE, size = 2, color = "#D4AF37") +
+      scale_x_date(date_labels = "%m/%Y", date_breaks = "1 month") +
+    labs(title = "Monthly Percentage of Community-Noted Tweets Containing Synthetic Media",
+         y = "Percentage", x = "Month/Year") +
+    custom_theme +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+
+percentage_plot <- plot_aigen_percentage(community_notes, annotated_data)
+print(percentage_plot)
 
 #######################################################################################################################
    # Monthly Views Obtained by Synthetic Media #
@@ -132,7 +171,7 @@ plot_monthly_views <- function(annotated_data) {
     geom_smooth(se=FALSE, size=2, color="#D4AF37") +
     scale_x_date(date_labels = "%m/%Y", date_breaks = "1 month") +
     scale_y_continuous(labels = function(x) paste0(number(x / 1e6, accuracy = 1), "m")) +
-    labs(title = "Monthly Views of Tweets with AI-Generated Media",
+    labs(title = "Monthly Views of Tweets with Synthetic Media",
          y = "Total Views", x = "Month/Year") +
     custom_theme +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
@@ -147,7 +186,40 @@ raw_views_plot = plot_monthly_views(annotated_data)
 #######################################################################################################################
 
 merged_temporal_plot = grid.arrange(percentage_plot, raw_views_plot, nrow = 2)
-ggsave("figures/fig_1.png", plot = merged_temporal_plot, width = 11, height = 10, dpi = 500)
+ggsave("figures/fig_1.png", plot = merged_temporal_plot, width = 11, height = 9, dpi = 1500)
+
+#######################################################################################################################
+   # Monthly Raw Frequency of Tweets Containing Synthetic Media #
+#######################################################################################################################
+
+plot_raw_frequency <- function(community_notes) {
+
+preprocess_data <- function(df) {
+  df$Month <- as.Date(df$tweetDate, format='%d/%m/%Y')
+  monthly_counts <- df %>%
+    group_by(Month = floor_date(Month, "month")) %>%
+    summarise(unique_tweets = n_distinct(tweetId), .groups = "drop") %>%  
+    filter(Month > as.Date("2022-11-01")) %>%
+    filter(Month <= as.Date("2023-09-30"))
+  return(monthly_counts)
+}
+
+monthly_counts <- preprocess_data(annotated_data)
+
+p <- ggplot(monthly_counts, aes(x = Month, y = unique_tweets)) +
+  geom_bar(stat = "identity", fill = "#539794") +
+  geom_smooth(se=FALSE,size=2,color="#D4AF37") +
+  custom_theme +
+  xlab("Month") +
+  ylab("Unique Tweets") +
+  ggtitle("Monthly Number of Unique Tweets Containing Synthetic Media") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_x_date(labels = date_format("%m/%Y"), date_breaks = "1 month") 
+
+  return(p)
+}
+
+raw_frequency_plot <- plot_raw_frequency(annotated_data)
 
 #######################################################################################################################
    # Stepwise CDF Plot #
@@ -185,7 +257,7 @@ weekly_cdf_plot <- function(annotated_data) {
 }
 
 cdf_plot <- weekly_cdf_plot(annotated_data)
-ggsave("figures/fig_2.png", plot = cdf_plot, width = 11, height = 10, dpi = 500)
+ggsave("figures/fig_2.png", plot = cdf_plot, width = 14, height = 10, dpi = 500)
 
 #######################################################################################################################
    # Raincloud Plots by Features Combinations (log scale) - Define Main Function #
