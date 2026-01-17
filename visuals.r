@@ -1,350 +1,332 @@
-#######################################################################################################################
-   # Set up environment #
-#######################################################################################################################
+# Synthetic Media Prevalence on X - Visualization Script
+# This script generates publication-quality figures for the analysis.
 
-install.packages("reticulate")
-install.packages('ggdist')
-install.packages("readxl")
 library(reticulate)
 library(tidyverse)
 library(ggplot2)
 library(ggdist)
 library(dplyr)
 library(lubridate)
-library(readxl)
 library(scales)
 library(gridExtra)
-options(scipen = 999)
 
+options(scipen = 999)
 pd <- import("pandas")
 
-#######################################################################################################################
-   # Import Data from Python Pickle and Labelled Data from Csv #
-#######################################################################################################################
+# Configuration
+DATE_START <- as.Date("2022-11-01")
+DATE_END <- as.Date("2023-09-30")
+PRIMARY_COLOR <- "#539794"
+ACCENT_COLOR <- "#D4AF37"
+
+# =============================================================================
+# Data Import and Preprocessing
+# =============================================================================
 
 community_notes <- as.list(pd$read_pickle("data/community-notes-filtered.pkl"))
 annotated_data <- read.csv("data/annotated-data.csv")
-#######################################################################################################################
-   # Pre-Process Data to Format Numeric Columns and Compute Views/Followers Ratio #
-#######################################################################################################################
 
 convert_to_numeric <- function(x) {
-  if (grepl("k", x)) {
-    return(as.numeric(gsub("k", "", x)) * 1e3)
-  } else if (grepl("m", x)) {
-    return(as.numeric(gsub("m", "", x)) * 1e6)
+  if (grepl("k", x, ignore.case = TRUE)) {
+    as.numeric(gsub("k", "", x, ignore.case = TRUE)) * 1e3
+  } else if (grepl("m", x, ignore.case = TRUE)) {
+    as.numeric(gsub("m", "", x, ignore.case = TRUE)) * 1e6
   } else {
-    return(as.numeric(x))
+    as.numeric(x)
   }
 }
 
-columns_to_transform <- c("views", "reposts", "quotes", "likes","bookmarks","userFollowers")
-for (col in columns_to_transform) {
+numeric_columns <- c("views", "reposts", "quotes", "likes", "bookmarks", "userFollowers")
+for (col in numeric_columns) {
   annotated_data[[col]] <- sapply(annotated_data[[col]], convert_to_numeric)
 }
 
-annotated_data$viewsFollowersRatio <- with(annotated_data, ifelse(userFollowers > 0, views / userFollowers, NA))
-annotated_data <- annotated_data[!is.na(annotated_data$viewsFollowersRatio), ]
+annotated_data <- annotated_data %>%
+  mutate(viewsFollowersRatio = ifelse(userFollowers > 0, views / userFollowers, NA)) %>%
+  filter(!is.na(viewsFollowersRatio))
 
-#######################################################################################################################
-   # Set a Custom Theme for Visualizations #
-#######################################################################################################################
+# =============================================================================
+# Custom Theme
+# =============================================================================
 
 custom_theme <- theme_bw(base_size = 16) +
-  theme(panel.border = element_blank(),
-        panel.grid.major.x = element_blank(), # Remove vertical lines
-        panel.grid.major.y = element_line(color = "gray"), # Keep horizontal lines
-        panel.grid.minor = element_blank(),
-        panel.background = element_blank(),
-        axis.line.x = element_line(color = "black", size = 0.2),
-        axis.line.y = element_line(color = "black", size = 0.2),
-        axis.ticks = element_line(size = 1),
-        axis.text.x = element_text(size = 17),
-        axis.text.y = element_text(size = 17),
-        axis.title.x = element_text(size = 20, face = "bold"),
-        axis.title.y = element_text(size = 20, face = "bold"),
-        plot.title = element_text(size = 18, hjust = 0.5, face = "bold"),
-        plot.subtitle = element_text(size = 14, hjust = 0.5, face = "bold"),
-        plot.caption = element_text(size = 15, face = "bold"),
-        legend.position = "none",
-        legend.box = "none", 
-        plot.margin = margin(t = 30, r = 10, b = 30, l = 10, unit = "pt"))
+  theme(
+    panel.border = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "gray"),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    axis.line.x = element_line(color = "black", linewidth = 0.2),
+    axis.line.y = element_line(color = "black", linewidth = 0.2),
+    axis.ticks = element_line(linewidth = 1),
+    axis.text.x = element_text(size = 17),
+    axis.text.y = element_text(size = 17),
+    axis.title.x = element_text(size = 20, face = "bold"),
+    axis.title.y = element_text(size = 20, face = "bold"),
+    plot.title = element_text(size = 18, hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(size = 14, hjust = 0.5, face = "bold"),
+    plot.caption = element_text(size = 15, face = "bold"),
+    legend.position = "none",
+    legend.box = "none",
+    plot.margin = margin(t = 30, r = 10, b = 30, l = 10, unit = "pt")
+  )
 
-#######################################################################################################################
-   # Relative Frequency of Community Notes Mentioning Synthetic Media by Monthly #
-#######################################################################################################################
+# =============================================================================
+# Helper Functions
+# =============================================================================
 
-plot_visual_disinformation_percentage <- function(community_notes) {
+aggregate_monthly_counts <- function(df, date_col, count_col = NULL) {
+  df %>%
+    mutate(Month = floor_date(as.Date(.data[[date_col]], format = "%d/%m/%Y"), "month")) %>%
+    filter(Month > DATE_START, Month <= DATE_END) %>%
+    {
+      if (is.null(count_col)) {
+        group_by(., Month) %>% summarise(n = n_distinct(tweetId), .groups = "drop")
+      } else {
+        group_by(., Month) %>% summarise(total = sum(.data[[count_col]], na.rm = TRUE), .groups = "drop")
+      }
+    }
+}
 
-  preprocess_data <- function(df) {
-    df$Month <- as.Date(df$date, format='%d/%m/%Y')
-    monthly_counts <- df %>%
-      group_by(Month = floor_date(Month, "month")) %>%
-      summarise(n = n_distinct(tweetId), .groups = "drop") %>%  
-      mutate(Month_Year = format(Month, "%m/%Y")) %>%
-      filter(Month > as.Date("2022-11-01")) %>%
-      filter(Month <= as.Date("2023-09-30"))
-    return(monthly_counts)
-  }
+format_axis_labels <- function(x) {
+  ifelse(x >= 1e6, paste0(round(x / 1e6, 1), "m"),
+    ifelse(x >= 1e3, paste0(round(x / 1e3, 1), "k"), x))
+}
 
-  monthly_total_notes <- preprocess_data(community_notes[['no_visual']])
-  monthly_visual_disinformation <- preprocess_data(community_notes[['visual']])
-  monthly_counts <- monthly_total_notes %>%
-    full_join(monthly_visual_disinformation, by = c("Month", "Month_Year"), suffix = c("_total", "_visual")) %>%
+# =============================================================================
+# Plot 1: Monthly Percentage of Community Notes Mentioning Synthetic Media
+# =============================================================================
+
+plot_notes_percentage <- function(community_notes) {
+  total_counts <- aggregate_monthly_counts(community_notes[["no_visual"]], "date")
+  visual_counts <- aggregate_monthly_counts(community_notes[["visual"]], "date")
+
+  monthly_data <- total_counts %>%
+    full_join(visual_counts, by = "Month", suffix = c("_total", "_visual")) %>%
     replace_na(list(n_total = 0, n_visual = 0)) %>%
     mutate(Percentage = (n_visual / n_total) * 100)
 
-  percentage_plot <- ggplot(monthly_counts, aes(x = Month, y = Percentage)) +
-    geom_bar(stat = "identity", fill = '#539794') +
-    geom_smooth(se=FALSE,size=2,color="#D4AF37") +
+  ggplot(monthly_data, aes(x = Month, y = Percentage)) +
+    geom_bar(stat = "identity", fill = PRIMARY_COLOR) +
+    geom_smooth(se = FALSE, linewidth = 2, color = ACCENT_COLOR) +
     scale_x_date(date_labels = "%m/%Y", date_breaks = "1 month") +
-    labs(title = "Monthly Percentage of Tweets with Notes Mentioning Synthetic Media",
-         y = "Percentage", x = "Month/Year") +
+    labs(
+      title = "Monthly Percentage of Tweets with Notes Mentioning Synthetic Media",
+      x = "Month/Year",
+      y = "Percentage"
+    ) +
     custom_theme +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
-  print(percentage_plot)
 }
 
-frequency_percentage_plot = plot_visual_disinformation_percentage(community_notes)
-
-#######################################################################################################################
-   # Relative Frequency of Tweets Containing Synthetic Media #
-#######################################################################################################################
+# =============================================================================
+# Plot 2: Monthly Percentage of Tweets Containing Synthetic Media
+# =============================================================================
 
 plot_synthetic_percentage <- function(community_notes, annotated_data) {
-  # Helper function to preprocess and aggregate data
-  preprocess_and_aggregate <- function(df, date_col) {
-    df %>%
-      mutate(Month = floor_date(as.Date(df[[date_col]], format='%d/%m/%Y'), "month")) %>%
-      count(Month) %>%
-      filter(Month > as.Date("2022-11-01"), Month <= as.Date("2023-09-30")) %>%
-      mutate(Month_Year = format(Month, "%m/%Y")) %>%
-      select(Month_Year, n)
-  }
-  
-  combined_notes <- bind_rows(
-    preprocess_and_aggregate(community_notes[['no_visual']], "date"),
-    preprocess_and_aggregate(community_notes[['visual']], "date")
+  all_notes <- bind_rows(
+    community_notes[["no_visual"]] %>%
+      mutate(Month = floor_date(as.Date(date, format = "%d/%m/%Y"), "month")) %>%
+      filter(Month > DATE_START, Month <= DATE_END) %>%
+      count(Month),
+    community_notes[["visual"]] %>%
+      mutate(Month = floor_date(as.Date(date, format = "%d/%m/%Y"), "month")) %>%
+      filter(Month > DATE_START, Month <= DATE_END) %>%
+      count(Month)
   ) %>%
-    group_by(Month_Year) %>%
+    group_by(Month) %>%
     summarise(total_n = sum(n, na.rm = TRUE), .groups = "drop")
-  
-  annotated_data$Month_Year <- format(as.Date(annotated_data$tweetDate, format='%d/%m/%Y'), "%m/%Y")
-  
-  combined_notes %>%
-    left_join(annotated_data %>% count(Month_Year), by = "Month_Year") %>%
-    mutate(Percentage = (n / total_n) * 100) %>%
-    ggplot(aes(x = as.Date(paste0("01/", Month_Year), format="%d/%m/%Y"), y = Percentage)) +
-      geom_col(fill = '#539794') +
-      geom_smooth(se = FALSE, size = 2, color = "#D4AF37") +
-      scale_x_date(date_labels = "%m/%Y", date_breaks = "1 month") +
-    labs(title = "Monthly Percentage of Community-Noted Tweets Containing Synthetic Media",
-         y = "Percentage", x = "Month/Year") +
+
+  annotated_counts <- annotated_data %>%
+    mutate(Month = floor_date(as.Date(tweetDate, format = "%d/%m/%Y"), "month")) %>%
+    count(Month)
+
+  plot_data <- all_notes %>%
+    left_join(annotated_counts, by = "Month") %>%
+    mutate(Percentage = (n / total_n) * 100)
+
+  ggplot(plot_data, aes(x = Month, y = Percentage)) +
+    geom_col(fill = PRIMARY_COLOR) +
+    geom_smooth(se = FALSE, linewidth = 2, color = ACCENT_COLOR) +
+    scale_x_date(date_labels = "%m/%Y", date_breaks = "1 month") +
+    labs(
+      title = "Monthly Percentage of Community-Noted Tweets Containing Synthetic Media",
+      x = "Month/Year",
+      y = "Percentage"
+    ) +
     custom_theme +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
 }
 
-percentage_plot <- plot_aigen_percentage(community_notes, annotated_data)
-print(percentage_plot)
-
-#######################################################################################################################
-   # Monthly Views Obtained by Synthetic Media #
-#######################################################################################################################
+# =============================================================================
+# Plot 3: Monthly Views of Synthetic Media Tweets
+# =============================================================================
 
 plot_monthly_views <- function(annotated_data) {
+  monthly_data <- annotated_data %>%
+    mutate(Month = floor_date(as.Date(tweetDate, format = "%d/%m/%Y"), "month")) %>%
+    filter(Month > DATE_START, Month <= DATE_END) %>%
+    group_by(Month) %>%
+    summarise(total_views = sum(views, na.rm = TRUE), .groups = "drop")
 
-  preprocess_data <- function(df) {
-    df$Month <- as.Date(df$tweetDate, format='%d/%m/%Y')
-    monthly_counts <- df %>%
-      group_by(Month = floor_date(Month, "month")) %>%
-      summarise(total_views = sum(views, na.rm = TRUE), .groups = "drop") %>%  
-      filter(Month > as.Date("2022-11-01")) %>%
-      filter(Month <= as.Date("2023-09-30"))
-    return(monthly_counts)
-  }
-
-  monthly_counts <- preprocess_data(annotated_data)
-  
-  views_plot <- ggplot(monthly_counts, aes(x = Month, y = total_views)) +
-    geom_bar(stat = "identity", fill = '#539794') +
-    geom_smooth(se=FALSE, size=2, color="#D4AF37") +
+  ggplot(monthly_data, aes(x = Month, y = total_views)) +
+    geom_bar(stat = "identity", fill = PRIMARY_COLOR) +
+    geom_smooth(se = FALSE, linewidth = 2, color = ACCENT_COLOR) +
     scale_x_date(date_labels = "%m/%Y", date_breaks = "1 month") +
     scale_y_continuous(labels = function(x) paste0(number(x / 1e6, accuracy = 1), "m")) +
-    labs(title = "Monthly Views of Tweets with Synthetic Media",
-         y = "Total Views", x = "Month/Year") +
+    labs(
+      title = "Monthly Views of Tweets with Synthetic Media",
+      x = "Month/Year",
+      y = "Total Views"
+    ) +
     custom_theme +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
-  
-  print(views_plot)
 }
 
-raw_views_plot = plot_monthly_views(annotated_data) 
+# =============================================================================
+# Plot 4: Monthly Raw Frequency
+# =============================================================================
 
-#######################################################################################################################
-   # Merge and Output Temporal Plots #
-#######################################################################################################################
+plot_raw_frequency <- function(annotated_data) {
+  monthly_data <- annotated_data %>%
+    mutate(Month = floor_date(as.Date(tweetDate, format = "%d/%m/%Y"), "month")) %>%
+    filter(Month > DATE_START, Month <= DATE_END) %>%
+    group_by(Month) %>%
+    summarise(unique_tweets = n_distinct(tweetId), .groups = "drop")
 
-merged_temporal_plot = grid.arrange(percentage_plot, raw_views_plot, nrow = 2)
-ggsave("figures/fig_1.png", plot = merged_temporal_plot, width = 11, height = 9, dpi = 1500)
-
-#######################################################################################################################
-   # Monthly Raw Frequency of Tweets Containing Synthetic Media #
-#######################################################################################################################
-
-plot_raw_frequency <- function(community_notes) {
-
-preprocess_data <- function(df) {
-  df$Month <- as.Date(df$tweetDate, format='%d/%m/%Y')
-  monthly_counts <- df %>%
-    group_by(Month = floor_date(Month, "month")) %>%
-    summarise(unique_tweets = n_distinct(tweetId), .groups = "drop") %>%  
-    filter(Month > as.Date("2022-11-01")) %>%
-    filter(Month <= as.Date("2023-09-30"))
-  return(monthly_counts)
+  ggplot(monthly_data, aes(x = Month, y = unique_tweets)) +
+    geom_bar(stat = "identity", fill = PRIMARY_COLOR) +
+    geom_smooth(se = FALSE, linewidth = 2, color = ACCENT_COLOR) +
+    scale_x_date(labels = date_format("%m/%Y"), date_breaks = "1 month") +
+    labs(
+      title = "Monthly Number of Unique Tweets Containing Synthetic Media",
+      x = "Month",
+      y = "Unique Tweets"
+    ) +
+    custom_theme +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
 }
 
-monthly_counts <- preprocess_data(annotated_data)
+# =============================================================================
+# Plot 5: Cumulative Distribution Function
+# =============================================================================
 
-p <- ggplot(monthly_counts, aes(x = Month, y = unique_tweets)) +
-  geom_bar(stat = "identity", fill = "#539794") +
-  geom_smooth(se=FALSE,size=2,color="#D4AF37") +
-  custom_theme +
-  xlab("Month") +
-  ylab("Unique Tweets") +
-  ggtitle("Monthly Number of Unique Tweets Containing Synthetic Media") +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
-  scale_x_date(labels = date_format("%m/%Y"), date_breaks = "1 month") 
-
-  return(p)
-}
-
-raw_frequency_plot <- plot_raw_frequency(annotated_data)
-
-#######################################################################################################################
-   # Stepwise CDF Plot #
-#######################################################################################################################
-
-weekly_cdf_plot <- function(annotated_data) {
-  annotated_data <- annotated_data %>%
-    mutate(
-      tweetDate = as.Date(tweetDate, format="%d/%m/%Y"),
-      Week = floor_date(tweetDate, unit="week")
-    )
-  
+plot_weekly_cdf <- function(annotated_data) {
   weekly_data <- annotated_data %>%
+    mutate(
+      tweetDate = as.Date(tweetDate, format = "%d/%m/%Y"),
+      Week = floor_date(tweetDate, unit = "week")
+    ) %>%
     group_by(Week) %>%
     summarise(weekly_views = sum(views), .groups = "drop") %>%
     arrange(Week) %>%
     mutate(
       cumulative_views = cumsum(weekly_views),
-      Week_Label = strftime(Week, format="%V/%Y"),
       cumulative_views_millions = cumulative_views / 1e6
     )
-  
-  cdf_plot <- ggplot(weekly_data, aes(x = Week, y = cumulative_views_millions)) +
-    geom_step(color="#539794", size=2) +
-    geom_vline(xintercept = as.Date("2023-03-13"), linetype="dotted", color="#D4AF37", size=2) +
-    scale_x_date(
-      date_breaks = "5 weeks", 
-      labels = function(x) strftime(x, format="%V/%Y")  
+
+  ggplot(weekly_data, aes(x = Week, y = cumulative_views_millions)) +
+    geom_step(color = PRIMARY_COLOR, linewidth = 2) +
+    geom_vline(xintercept = as.Date("2023-03-13"), linetype = "dotted", color = ACCENT_COLOR, linewidth = 2) +
+    scale_x_date(date_breaks = "5 weeks", labels = function(x) strftime(x, format = "%V/%Y")) +
+    scale_y_continuous(labels = label_number(suffix = "m")) +
+    labs(
+      title = "CDF of Views of Tweets with AI-Generated Media",
+      x = "Week",
+      y = "Cumulative Views (Millions)"
     ) +
-    scale_y_continuous(labels = scales::label_number(suffix = "m")) +
-    labs(x = "Week", y = "Cumulative Views (Millions)", title = "CDF of Views of Tweets with AI-Generated Media") +
     custom_theme
-  
-  return(cdf_plot)
 }
 
-cdf_plot <- weekly_cdf_plot(annotated_data)
-ggsave("figures/fig_2.png", plot = cdf_plot, width = 14, height = 10, dpi = 500)
+# =============================================================================
+# Plot 6: Raincloud Plots
+# =============================================================================
 
-#######################################################################################################################
-   # Raincloud Plots by Features Combinations (log scale) - Define Main Function #
-#######################################################################################################################
+plot_raincloud <- function(data, views_col, grouping_var, title, color_map) {
+  data_filtered <- data %>%
+    select(all_of(c(views_col, grouping_var))) %>%
+    na.omit() %>%
+    mutate(across(all_of(grouping_var), as.factor))
 
-plot_raincloud <- function(data_frame, views_col, grouping_var, custom_title, color_values) {
-  
-  # Filter out NA values
-  data_filtered <- na.omit(data_frame[, c(views_col, grouping_var)])
-  
-  # Convert categorical_col to factor if it's not
-  data_filtered[[grouping_var]] <- as.factor(data_filtered[[grouping_var]])
-  
-  # Custom label function for axis
-  label_format <- function(x) {
-    ifelse(x >= 1e6, paste0(round(x / 1e6, 1), 'm'),
-           ifelse(x >= 1e3, paste0(round(x / 1e3, 1), 'k'), x))
-  }
-
-  # Create the raincloud plot
-  p <- ggplot(data_filtered, aes_string(x = views_col, y = grouping_var, fill = grouping_var, color = grouping_var)) +
-    stat_halfeye(point_color = NA,
-      .width = 0, height = 0.6,
+  ggplot(data_filtered, aes(x = .data[[views_col]], y = .data[[grouping_var]],
+                            fill = .data[[grouping_var]], color = .data[[grouping_var]])) +
+    stat_halfeye(
+      point_color = NA,
+      .width = 0,
+      height = 0.6,
       position = position_nudge(y = 0.3)
     ) +
     geom_boxplot(
       position = position_nudge(y = 0.2),
-      width = 0.1, outlier.shape = NA,
-      aes(fill=NULL)
+      width = 0.1,
+      outlier.shape = NA,
+      aes(fill = NULL)
     ) +
-    geom_point(
-      position = position_jitter(width = 0, height = 0.1, seed = 1)
-    ) +
+    geom_point(position = position_jitter(width = 0, height = 0.1, seed = 1)) +
     coord_flip() +
-    scale_color_manual(values = color_values) +
-    scale_fill_manual(values = color_values) +
+    scale_color_manual(values = color_map) +
+    scale_fill_manual(values = color_map) +
     scale_x_continuous(
-      trans = 'log10', 
-      labels = label_format, 
-      limits = c(1e2, 1e8), 
+      trans = "log10",
+      labels = format_axis_labels,
+      limits = c(1e2, 1e8),
       breaks = c(1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8)
     ) +
     labs(
-      title = custom_title,
-      x = "Views (Log Scale)", 
+      title = title,
+      x = "Views (Log Scale)",
       y = "Category"
     ) +
     custom_theme +
-    theme(
-      legend.position = "none",
-      plot.title = element_text(hjust = 0.5)  # Center-align the title
-    )
-
-  # Save the plot
-  return(p)
+    theme(legend.position = "none", plot.title = element_text(hjust = 0.5))
 }
 
-#######################################################################################################################
-   # Raincloud Plots by Features Combinations (log scale) - Run and Save Plots for Each Feature Combination #
-#######################################################################################################################
+# =============================================================================
+# Generate and Save Figures
+# =============================================================================
 
-# Define the color mappings for each categorical variable
-media_map <- c("IMAGE" = "#539794", "VIDEO" = "#D4AF37")
-pol_map <- c("NON-POLITICAL" = "#539794", "POLITICAL" = "#D4AF37")
-verified_map <- c("FALSE" = "#539794", "TRUE" = "#D4AF37")
+# Figure 1: Temporal trends
+percentage_plot <- plot_synthetic_percentage(community_notes, annotated_data)
+views_plot <- plot_monthly_views(annotated_data)
+fig_1 <- grid.arrange(percentage_plot, views_plot, nrow = 2)
+ggsave("figures/fig_1.png", plot = fig_1, width = 11, height = 9, dpi = 1500)
 
-# Create the plots for the categorial variables POLITICAL and MEDIA
-political_raincloud = plot_raincloud(annotated_data, 'views', 'political', 'Tweet Views by Political Status', pol_map)
-media_raincloud = plot_raincloud(annotated_data, 'views', 'media', 'Tweet Views by Media Type', media_map)
-media_pol_rainclouds = grid.arrange(political_raincloud,media_raincloud,ncol=2)
+# Figure 2: CDF
+cdf_plot <- plot_weekly_cdf(annotated_data)
+ggsave("figures/fig_2.png", plot = cdf_plot, width = 14, height = 10, dpi = 500)
 
-ggsave("figures/fig_3.png", plot = media_pol_rainclouds, width = 14, height = 10, dpi = 500)
+# Figure 3: Political and media type raincloud plots
+media_colors <- c("IMAGE" = PRIMARY_COLOR, "VIDEO" = ACCENT_COLOR)
+political_colors <- c("NON-POLITICAL" = PRIMARY_COLOR, "POLITICAL" = ACCENT_COLOR)
 
+political_raincloud <- plot_raincloud(annotated_data, "views", "political",
+                                      "Tweet Views by Political Status", political_colors)
+media_raincloud <- plot_raincloud(annotated_data, "views", "media",
+                                  "Tweet Views by Media Type", media_colors)
+fig_3 <- grid.arrange(political_raincloud, media_raincloud, ncol = 2)
+ggsave("figures/fig_3.png", plot = fig_3, width = 14, height = 10, dpi = 500)
 
-# Create the plots for the categorial variable VERIFIED with views and viewsFollowersRatio
-verified_raincloud = plot_raincloud(annotated_data, 'views', 'verified', 'Tweet Views by Verified Status', verified_map)
+# Figure 4: Verification status raincloud plots
+verified_colors <- c("FALSE" = PRIMARY_COLOR, "TRUE" = ACCENT_COLOR)
 
-verified_ratio_raincloud <- plot_raincloud(annotated_data, 'viewsFollowersRatio', 'verified', 'Tweet Views/Followers Ratio by Verified Status', verified_map) +
-  scale_x_continuous(trans = 'log10', 
-                     limits = c(0.01, 10000), 
-                     breaks = c(0.01, 0.1, 1, 10, 100, 1000, 10000),
-                     labels = c("0.01", "0.1", "1", "10", "100", "1000", "10000")) +
-    labs( x = "Views/Followers Ratio (Log Scale)")
+verified_views <- plot_raincloud(annotated_data, "views", "verified",
+                                 "Tweet Views by Verified Status", verified_colors)
+verified_ratio <- plot_raincloud(annotated_data, "viewsFollowersRatio", "verified",
+                                 "Tweet Views/Followers Ratio by Verified Status", verified_colors) +
+  scale_x_continuous(
+    trans = "log10",
+    limits = c(0.01, 10000),
+    breaks = c(0.01, 0.1, 1, 10, 100, 1000, 10000),
+    labels = c("0.01", "0.1", "1", "10", "100", "1000", "10000")
+  ) +
+  labs(x = "Views/Followers Ratio (Log Scale)")
 
-verified_rainclouds = grid.arrange(verified_raincloud,verified_ratio_raincloud,ncol=2)
-ggsave("figures/fig_4.png", plot = verified_rainclouds, width = 14, height = 10, dpi = 500)
+fig_4 <- grid.arrange(verified_views, verified_ratio, ncol = 2)
+ggsave("figures/fig_4.png", plot = fig_4, width = 14, height = 10, dpi = 500)
 
-#######################################################################################################################
-   # Scraps #
-#######################################################################################################################
+# Additional plots (not saved to file)
+notes_percentage_plot <- plot_notes_percentage(community_notes)
+print(notes_percentage_plot)
+
+raw_frequency_plot <- plot_raw_frequency(annotated_data)
+print(raw_frequency_plot)
